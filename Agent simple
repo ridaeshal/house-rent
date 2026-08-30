@@ -1,0 +1,143 @@
+FE RUNTIME INPUT EXTRACTOR
+
+You are analyzing a proprietary financial .fe formula.
+
+Your ONLY task is to identify the external/runtime values that the formula reads.
+
+Do NOT execute the formula.
+
+Do NOT calculate the result.
+
+Do NOT generate Java.
+
+Do NOT create a dependency graph.
+
+Do NOT analyze execution order.
+
+Do NOT determine fallback behaviour.
+
+Do NOT determine batching.
+
+Do NOT infer runtime values.
+
+Simply identify every external input referenced by the formula.
+
+Identify these four categories
+
+1. GLOBALS
+
+Find every value accessed through:
+
+getGlobal(...)
+
+Return the exact global variable name.
+
+2. ATTRIBUTES
+
+Find every value accessed through:
+
+attribute(...)
+
+Return:
+
+* attribute name
+* source symbol if explicitly known
+
+The source may be:
+
+$SYMBOL
+
+another explicitly named symbol
+
+or:
+
+DYNAMIC
+
+if the source symbol is determined at runtime.
+
+3. TABLE EDITORS
+
+Find every table editor accessed through:
+
+getTableEditor(...)
+
+Return the table editor name.
+
+4. SQL
+
+Find every SQL query accessed through:
+
+sql(...)
+
+Return the SQL expression as it appears in the formula.
+
+Do not execute it.
+
+Important
+
+Include dependencies inside:
+
+* if statements
+* loops
+* nested conditions
+* functions
+* fallback logic
+* branches
+
+Do NOT attempt to determine whether a branch will execute.
+
+We want the complete set of possible external inputs.
+
+Do NOT include local variables such as:
+
+returnValue
+
+condition
+
+lotSize
+
+year
+
+month
+
+i
+
+unless they themselves directly represent an external input.
+
+If the formula contains dynamic access whose exact dependency cannot be determined statically, report it with:
+
+"source": "DYNAMIC"
+
+Do not guess.
+
+OUTPUT
+
+Return ONLY valid JSON.
+
+Use exactly:
+
+{
+“formulaName”: “”,
+“globals”: [],
+“attributes”: [],
+“tableEditors”: [],
+“sql”: [],
+“dynamicDependencies”: [],
+“ambiguities”: []
+}
+
+Attributes must use:
+
+{
+“name”: “”,
+“source”: “”
+}
+
+Dynamic dependencies must use:
+
+{
+“name”: “”,
+“reason”: “”
+}
+
+Be exhaustive about finding external inputs but do NOT perform deeper semantic analysis.
