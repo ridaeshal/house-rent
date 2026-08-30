@@ -1,0 +1,58 @@
+Implement the first working version of a generic DependencyResolver for my FE formula project.
+
+Input
+
+* Dependency manifest JSON produced by formula-input-extractor
+* Runtime $SYMBOL
+
+Output
+
+* RuntimeResolutionContext
+
+First scope: attribute resolution only
+
+Resolve:
+
+1. $SYMBOL attributes using the existing getStaticData(symbol, attributes) method.
+2. ctr, Ctymain, and Mstr attributes by first determining their actual runtime source symbol, then batch-resolving their attributes using getStaticData.
+
+Performance
+
+* Group attributes by source.
+* Deduplicate attribute names.
+* Make one getStaticData() call per resolved source symbol.
+* Do not make one AC call per attribute.
+* Do not repeatedly resolve the same source.
+
+Rules
+
+* Keep the resolver generic and formula-independent.
+* Do not create a FIN_ID_ELIOT-specific resolver.
+* Do not hardcode symbols, attribute values, or formula results.
+* Do not execute .fe files.
+* Do not generate Java versions of FE formulas.
+* Do not create runtime-generated classes.
+* Do not rewrite or duplicate existing AC methods.
+* Reuse the existing getStaticData() and AC connection implementation.
+
+Before coding
+
+Inspect the existing implementations of:
+
+* getStaticData
+* AC connection
+* existing symbol/attribute access logic
+
+Then make the minimum code changes required.
+
+Use FIN_ID_ELIOT as the test case, but keep the implementation generic.
+
+Do not implement table editors, SQL, or globals yet. We will add those after this compiles and works.
+
+After implementation, report only:
+
+1. Files changed
+2. Resolver flow
+3. How $SYMBOL, ctr, Ctymain, and Mstr are handled
+4. Compile/test result
+5. Remaining errors
