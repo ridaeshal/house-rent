@@ -1,0 +1,267 @@
+TASK: Implement $SYMBOL Attribute Runtime Resolution
+
+You are implementing Step 2 of the FE Formula Evaluation project.
+
+The Input Extractor Agent has already produced a JSON dependency manifest for each .fe formula.
+
+Your task is ONLY to implement runtime resolution for attributes whose source is explicitly:
+
+$SYMBOL
+
+Existing infrastructure
+
+The project already contains AC connectivity and static-data access functionality.
+
+Reuse the existing implementation:
+
+connectFromEnv()
+
+and:
+
+getStaticData(String symbol, String[] attributes)
+
+Do NOT replace, duplicate, or redesign these methods.
+
+Input
+
+The RuntimeResolver receives:
+
+1. The dependency manifest JSON
+2. The runtime symbol being evaluated
+
+Example:
+
+{
+  "formulaName": "FIN_ID_ELIOT",
+  "attributes": [
+    {
+      "name": "FIN_ID_GMI",
+      "source": "$SYMBOL"
+    },
+    {
+      "name": "FIN_LOT_SIZE",
+      "source": "$SYMBOL"
+    },
+    {
+      "name": "FIN_ID_RIC",
+      "source": "$SYMBOL"
+    }
+  ]
+}
+
+Runtime symbol:
+
+S6_128235505
+
+Required behaviour
+
+For every attribute where:
+
+source == "$SYMBOL"
+
+resolve the attribute against the supplied runtime symbol.
+
+Conceptually:
+
+FIN_ID_GMI
+     +
+S6_128235505
+     ↓
+getStaticData(
+    "S6_128235505",
+    ["FIN_ID_GMI"]
+)
+
+Do this for every $SYMBOL attribute.
+
+Output
+
+Produce a structured runtime result containing:
+
+* formula name
+* runtime symbol
+* resolved attributes
+* unresolved attributes
+* errors
+
+Example:
+
+{
+  "formulaName": "FIN_ID_ELIOT",
+  "symbol": "S6_128235505",
+  "attributes": {
+    "FIN_ID_GMI": "...",
+    "FIN_LOT_SIZE": 100,
+    "FIN_ID_RIC": "..."
+  },
+  "unresolved": [],
+  "errors": []
+}
+
+IMPORTANT: Batch the AC lookup
+
+Do NOT call:
+
+getStaticData(symbol, new String[]{"FIN_ID_GMI"});
+getStaticData(symbol, new String[]{"FIN_LOT_SIZE"});
+getStaticData(symbol, new String[]{"FIN_ID_RIC"});
+
+individually.
+
+Instead, collect all $SYMBOL attribute names first:
+
+FIN_ID_GMI
+FIN_LOT_SIZE
+FIN_ID_RIC
+...
+
+and make ONE AC static-data request:
+
+getStaticData(symbol, attributes)
+
+This is critical for performance on large formulas.
+
+Deduplication
+
+If the manifest contains the same:
+
+attribute + source
+
+more than once, resolve it only once.
+
+Do NOT deduplicate attributes that have different sources.
+
+For example, these are different dependencies:
+
+FIN_ID_GMI → $SYMBOL
+FIN_ID_GMI → Ctymain
+
+Dynamic sources
+
+Do NOT resolve:
+
+source == "DYNAMIC"
+
+in this task.
+
+Do NOT resolve:
+
+source == "ctr"
+source == "Mstr"
+source == "Ctymain"
+
+in this task.
+
+Leave them in an unresolved collection for the next resolution stage.
+
+Dynamic attribute names
+
+If:
+
+name == "$FIELD"
+
+and:
+
+source == "$SYMBOL"
+
+DO NOT invent the value of $FIELD.
+
+Record it as unresolved/dynamic:
+
+{
+  "name": "$FIELD",
+  "source": "$SYMBOL",
+  "reason": "Attribute name is runtime dynamic"
+}
+
+Do not call getStaticData() for $FIELD.
+
+Null / NA handling
+
+Do not convert AC values into guessed defaults.
+
+Preserve:
+
+* null
+* NA
+* empty values
+
+exactly as returned by the existing AC layer.
+
+Error handling
+
+If the AC lookup fails:
+
+* do not silently ignore the error
+* do not retry indefinitely
+* record the error in the result
+* do not fabricate a value
+
+Architecture constraints
+
+Create ONLY the minimum code required for this capability.
+
+Do NOT:
+
+* create a resolver class for FIN_ID_ELIOT
+* create a resolver class for each attribute
+* create runtime-generated classes
+* create Java code representing the FE formula
+* execute the .fe file
+* parse FE business logic
+* create a dependency graph
+* add a new database abstraction
+* create query wrappers
+* create helper classes unnecessarily
+* hardcode attribute names
+* hardcode runtime values
+* hardcode symbols
+
+The implementation must be generic and reusable for all .fe formulas.
+
+Performance requirement
+
+The design must support large formulas containing hundreds of dependencies.
+
+Therefore:
+
+1. Group $SYMBOL attributes.
+2. Deduplicate them.
+3. Perform the minimum number of AC calls.
+4. Resolve the batch once.
+5. Map returned values back to attribute names.
+
+Acceptance test
+
+For a manifest containing:
+
+FIN_ID_GMI → $SYMBOL
+FIN_LOT_SIZE → $SYMBOL
+FIN_ID_RIC → $SYMBOL
+FIN_MKT_ID → $SYMBOL
+FIN_ID_GMI → $SYMBOL
+
+and symbol:
+
+S6_128235505
+
+the implementation must make one AC static-data request containing:
+
+[
+  "FIN_ID_GMI",
+  "FIN_LOT_SIZE",
+  "FIN_ID_RIC",
+  "FIN_MKT_ID"
+]
+
+and return the corresponding values.
+
+Before writing code, inspect the existing AC utility classes and reuse their APIs. Do not create duplicate connectivity or data-access implementations.
+
+After implementation, provide:
+
+1. Files changed
+2. Classes/methods added
+3. A short explanation of the flow
+4. A test demonstrating the single batched AC lookup
+5. Any assumptions or limitations
