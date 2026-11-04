@@ -1,0 +1,72 @@
+I'm building a knowledge base of AutoSys batch job failures that a future AI support
+assistant will use. In this repo, job_logs_error/ holds production failure logs from
+the production support team, one sub-folder per job (e.g. job_logs_error/<JOB_NAME>/).
+Log files come in mixed formats: .err, .log, .gz (gzipped), and rotated logs like
+.1.log or .log.1. Some files may be large. Look at the actual files first to see their format.
+
+Build a two-part "knowledge base builder". Create every file below.
+
+PART 1: scripts/prepare_logs.py (Python standard library only, no pip installs)
+Usage: python scripts/prepare_logs.py job_logs_error/<JOB_NAME>
+It must:
+1. Read every log file in the job folder, including .gz (gzip) and rotated logs. Open
+   files with errors="replace" so bad characters don't crash it.
+2. Mask sensitive data in every line BEFORE anything is written out: passwords/tokens/
+   api keys (key=value), credentials in JDBC URLs, emails, 13-16 digit card-like
+   numbers, ID-like numbers (###-##-####), IP addresses.
+3. Find error lines: ERROR, FATAL, SEVERE, Exception, Traceback, "Caused by", Oracle
+   ORA-xxxxx codes, SQLSTATE, DB2 SQLxxxxN, "failed", "cannot", "not found",
+   "no such file", "permission denied", timeouts, "killed", out of memory, disk full,
+   non-zero exit codes.
+4. Group the same error across files into a "signature": replace timestamps, hex,
+   file paths, quoted values and plain numbers with placeholders, but KEEP error
+   codes intact (ORA-00054 must stay ORA-00054). Give each signature an id S01, S02...,
+   ranked by how many files it appears in.
+5. Write work/<JOB_NAME>/digest.md containing:
+   - a table of files: name, line count, first and last timestamp, number of error
+     lines, which signature ids appear in it
+   - each signature, with up to 2 sample excerpts (4 lines of context either side)
+   - the last 15 lines of each file and its first error line
+6. Write work/<JOB_NAME>/signatures.csv: id, signature, occurrences, files_seen_in,
+   file_names.
+Keep the digest small enough for an AI to read in one go.
+
+PART 2: .github/agents/kb-builder.agent.md (a VS Code Copilot custom agent)
+YAML front matter with a description. Its instructions must tell Copilot to:
+- Take a job name, then read work/<JOB>/digest.md and signatures.csv (if missing, tell
+  the user to run the script and stop), plus any existing knowledge/ files, so it
+  updates them instead of duplicating.
+- Reading rules: the FIRST real error in a file is usually the root cause; generic
+  lines like "Exiting with code 1" are symptoms, never causes; in stack traces the
+  innermost "Caused by" or the DB/OS error code is usually the cause; the same
+  signature id across files means the same failure recurring.
+- Produce:
+  1. data/failures.csv: one row per log file, columns: failure_id, date_time,
+     job_name, log_file, exit_code, first_error, error_code, pattern_id, root_cause,
+     fix_applied, safe_to_rerun, ticket, status. Leave root_cause, fix_applied,
+     safe_to_rerun and ticket empty unless the log states them; status = draft.
+  2. knowledge/patterns/<short-name>.md: one per distinct failure type, ids P001,
+     P002..., using templates/pattern-template.md. Patterns are shared across jobs,
+     so reuse a matching one.
+  3. knowledge/jobs/<JOB>.md: a job profile using templates/job-template.md.
+  4. knowledge/open-questions/<JOB>.md: numbered questions for production support:
+     for each pattern ask confirmed cause, fix, safe to rerun, escalation team; list
+     any unclassified logs.
+- Strict rules: quote error text exactly; never invent log lines, jobs, tables or
+  times; mark anything inferred as "DRAFT – to confirm with production support";
+  never unmask [MASKED]/[EMAIL]/[IP] values; finish with a short summary.
+
+Also create:
+- .github/prompts/build-kb.prompt.md: a fallback prompt file that says "follow
+  .github/agents/kb-builder.agent.md for job ${input:job}".
+- templates/pattern-template.md with sections: Status (draft/confirmed by, date),
+  Signature (exact error text, jobs seen in), Usual cause, How to confirm, Fix,
+  Do NOT, Safe to rerun (yes/no/depends), Escalate to, Seen (count, dates, examples).
+- templates/job-template.md with: Status, What it does, Box/schedule, Depends on,
+  Feeds, SLA, Log location, Safe to rerun, Owner/escalation, a Failure history table
+  (pattern, times seen, last seen), and Notes from production support.
+- Add work/ to .gitignore.
+
+Then test the script on one job folder in job_logs_error/. Show me the signature list,
+and confirm no unmasked passwords, emails or IPs appear in the digest. Don't run
+the kb-builder agent yet. I'll review the digest first.
