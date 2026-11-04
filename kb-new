@@ -1,0 +1,167 @@
+CONTEXT
+This repo contains our application codebase plus a folder jobs-logs-error/ holding
+production failure logs for AutoSys batch jobs. It has one sub-folder per job
+(e.g. jobs-logs-error/<JOB_NAME>/), each containing log files in mixed formats:
+.err, .log, .gz (gzipped), possibly rotated logs (.1.log, .log.1), and some may be large.
+Look at the real folders and a few real files before you design anything.
+
+GOAL
+Build ONE reusable Copilot custom agent, "kb-builder", that produces a comprehensive,
+evidence-based knowledge base for one batch job at a time. A future AI support agent
+will rely on this knowledge base to diagnose job failures, so accuracy and traceability
+matter more than volume.
+
+The agent's inputs:
+  1. job name (required), e.g. FIN_EOD_LOAD
+  2. path to the job's script in this repo (required), e.g. scripts/batch/fin_eod_load.sh
+  3. logs folder (optional, default jobs-logs-error/<job name>/)
+
+Create everything below, then test as described at the end.
+
+======================================================================
+PART 1: scripts/prepare_logs.py (log preprocessor, Python standard library only)
+======================================================================
+Usage: python scripts/prepare_logs.py <logs_folder> [--job <JOB_NAME>]
+Needed because Copilot can't read .gz, large logs overflow context, and sensitive data
+must be masked before any AI reads it.
+1. Read every log file in the folder recursively, including .gz (gzip) and rotated
+   logs; open with errors="replace". Skip binaries.
+2. Mask, in every line BEFORE writing output: passwords/tokens/secrets/api keys
+   (key=value or key: value), credentials inside JDBC/DB/URL connection strings,
+   emails, 13-16 digit card-like numbers, ###-##-#### IDs, IP addresses.
+3. Detect error lines: ERROR, FATAL, SEVERE, WARN followed by failure, Exception,
+   Traceback, "Caused by", ORA-xxxxx, SQLSTATE, DB2 SQLxxxxN, "failed", "cannot",
+   "could not", "not found", "no such file", "permission denied", timeouts, "killed",
+   out of memory, no space left, non-zero exit/return codes.
+4. Group identical errors across files into signatures: replace timestamps, hex,
+   file paths, quoted values and plain numbers with placeholders, but KEEP error codes
+   (ORA-00054, SQL0911N, HTTP 503) intact. Ids S01, S02..., ranked by number of files.
+5. Write work/<JOB>/digest.md:
+   - file table: name, size, lines, first/last timestamp, error-line count, signature ids
+   - per signature: normalised text, files and counts, up to 2 masked excerpts with
+     4 lines of context either side
+   - per file: its first error line and its last 15 lines
+6. Write work/<JOB>/signatures.csv: id, signature, occurrences, files_seen_in, file_names.
+7. Print a one-line summary. Keep digest.md small enough for an AI to read in one go
+   (cap excerpts if needed).
+
+======================================================================
+PART 2: .github/agents/kb-builder.agent.md (the custom agent)
+======================================================================
+YAML front matter with a description. The instructions must make the agent do this:
+
+STEP 0: Inputs and preparation
+- Confirm the job name, script path and logs folder exist. If anything is missing, ask
+  and stop.
+- If work/<JOB>/digest.md is missing or older than the logs, run (or ask the user to run)
+  python scripts/prepare_logs.py <logs_folder> --job <JOB>.
+- Read the existing knowledge/ files for this job and the shared patterns, so it UPDATES
+  instead of duplicating.
+
+STEP 1: Understand the code (read-only; never modify code)
+Start at the given script and follow what it calls: other scripts, Python/Java/SQL files,
+stored procedures, config/properties files and environment variables. Follow at most
+3 levels deep; list anything it couldn't follow. Extract:
+- purpose of the job in plain English
+- entry point and step-by-step flow
+- inputs: files (paths/patterns), DB tables/views read, APIs, upstream data
+- outputs: files written, tables inserted/updated/deleted/truncated, messages sent
+- external systems: databases, SFTP/file shares, APIs, queues
+- configuration and parameters (names only, NEVER secret values)
+- every place the code logs an error, raises an exception or exits non-zero:
+  message text, exit code, file:line, the condition that triggers it
+- retries, timeouts, commits/rollbacks, cleanup on failure
+- rerun safety: does a rerun duplicate data (plain inserts/appends) or is it safe
+  (truncate-and-reload, merge/upsert, idempotency checks)? Cite the code.
+
+STEP 2: Understand the failures
+Read work/<JOB>/digest.md and signatures.csv. Reading rules:
+- the FIRST real error in a file is usually the root cause; later lines are consequences
+- generic lines ("Exiting with code 1", "job failed") are symptoms, never causes
+- in stack traces the innermost "Caused by" or the DB/OS error code is usually the cause
+- the same signature id across files means the same failure recurring
+
+STEP 3: Connect logs to code
+For each signature, find where in the code that message or exit code is produced,
+or where the failing operation happens (e.g. the SQL statement behind an ORA error).
+Explain what the code was doing at that moment and what conditions could cause it.
+This is the most valuable part of the knowledge base.
+
+STEP 4: Write the knowledge base
+  knowledge/README.md
+     How the knowledge base is organised and how a future agent should use it:
+     look up the error in error-catalog.csv, then read the pattern, then the job files.
+     Create it once and keep it current.
+  knowledge/index.md
+     Catalogue of all jobs and patterns, one line each, with links.
+  knowledge/jobs/<JOB>/overview.md
+     Purpose, script path, schedule/box (if known, else "unknown – ask"), inputs,
+     outputs, upstream/downstream dependencies, external systems, SLA, owner.
+  knowledge/jobs/<JOB>/code-map.md
+     Flow of the job step by step with file:line references, key functions, config
+     keys, plus an "error and exit-code map" table: message/exit code | file:line |
+     trigger condition | meaning.
+  knowledge/jobs/<JOB>/failure-history.md
+     One row per failed run (log file): date/time, first error, signature, pattern,
+     what the code was doing.
+  knowledge/jobs/<JOB>/troubleshooting.md
+     A runbook per failure type seen: how to recognise it, what to check to confirm
+     (concrete commands or queries where the code makes them obvious), likely fix,
+     what NOT to do, when to escalate.
+  knowledge/jobs/<JOB>/rerun-safety.md
+     Verdict yes/no/depends with code evidence, the risks (duplicates, partial loads,
+     downstream re-triggers) and preconditions for a safe rerun.
+  knowledge/patterns/P###-<short-name>.md
+     One per distinct failure type, shared across jobs (reuse and extend a matching
+     pattern; add this job to its list). Sections: Status, Signature (exact text, error
+     codes), Jobs seen in (with counts), Usual cause, How to confirm, Fix, Do NOT, Safe to
+     rerun, Escalate to, Seen (count, date range, example log files).
+  knowledge/error-catalog.csv
+     Machine-readable lookup for the future agent, one row per signature per job:
+     signature_id, job, normalised_error, error_code, source_location(file:line),
+     pattern_id, category (data|dependency|infrastructure|database|code|credentials|
+     unknown), confidence (high|medium|low), status.
+  data/failures.csv
+     One row per log file: failure_id, date_time, job_name, log_file, exit_code,
+     first_error, error_code, signature_id, pattern_id, root_cause, fix_applied,
+     safe_to_rerun, ticket, status. Leave root_cause, fix_applied, safe_to_rerun and
+     ticket EMPTY unless logs or code prove them. status = draft.
+  knowledge/jobs/<JOB>/open-questions.md
+     Numbered questions for the production support team: per pattern, confirm the cause,
+     the fix used, rerun safety, escalation team; plus schedule/SLA/owner gaps, code paths
+     the agent couldn't follow, and unclassified logs.
+
+STEP 5: Finish
+Print a summary: logs processed, signatures found, patterns created/updated, code files
+read, open questions raised, and anything it couldn't determine.
+
+STRICT RULES for the agent (put these in the agent file):
+- Every claim carries its evidence: [LOG: file] or [CODE: path:line]. Anything inferred
+  is marked "DRAFT – to confirm with production support".
+- Quote error text exactly. Never invent log lines, jobs, tables, times or file paths.
+- Read-only on code. Never copy secrets from config into the knowledge base; record
+  config key NAMES only. Never unmask [MASKED]/[EMAIL]/[IP] values.
+- Never state "safe to rerun: yes" without code evidence; even then it stays DRAFT
+  until production support confirms.
+- Prefer "unknown" over a guess. Every file gets "Status: draft" until a human confirms.
+- Update existing files rather than overwriting human-confirmed content; anything
+  marked "confirmed" is only changed by appending notes.
+
+======================================================================
+ALSO CREATE
+======================================================================
+- .github/prompts/build-kb.prompt.md: fallback if custom agents aren't available; tells
+  Copilot to follow .github/agents/kb-builder.agent.md with inputs ${input:job},
+  ${input:script} and optional ${input:logs}.
+- templates/ for every knowledge file above, so output is consistent across jobs.
+- Add work/ to .gitignore.
+
+======================================================================
+TEST (do this now)
+======================================================================
+1. Run scripts/prepare_logs.py on ONE job folder in jobs-logs-error/.
+2. Show me the signature list and the file table from the digest.
+3. Search the digest for unmasked passwords, connection credentials, emails and IPs and
+   report the result.
+4. Do NOT run the kb-builder agent yet. I will review the digest first, then run the
+   agent myself with the job name and script path.
